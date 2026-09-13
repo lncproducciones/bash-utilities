@@ -42,7 +42,6 @@ mostrar_ayuda() {
 }
 
 mostrar_about() {
-    clear
     echo ""
     echo "    volumeup.sh"
     echo "    ***********"
