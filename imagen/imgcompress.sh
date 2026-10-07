@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Nombre: imgcompress.sh
-# Descripción: Comprime imágenes PNG/JPG o las convierte a formato WebP.
+# Descripción: Comprime imágenes PNG/JPG o las convierte a formato WebP/PNG.
 #              Soporta archivos individuales y carpetas completas.
 # Autor: Nelson Ochoa.
 # ==============================================================================
@@ -22,12 +22,13 @@ mostrar_ayuda() {
     echo "Uso: imgcompress.sh [MODO] <archivo_o_directorio> [archivo_destino]"
     echo ""
     echo "Descripción:"
-    echo "  Comprime imágenes JPG/PNG o las convierte al formato optimizado WebP."
+    echo "  Comprime imágenes JPG/PNG o las convierte al formato optimizado WebP o PNG."
     echo "  Permite procesar archivos individuales o directorios completos."
     echo ""
     echo "Modos (Opcional, por defecto es --compress):"
     echo "  --compress         Comprime la imagen manteniendo su formato original."
     echo "  --webp             Convierte la imagen (JPG/PNG) a formato WebP con compresión."
+    echo "  --png              Convierte la imagen (JPG/WebP) a formato PNG con compresión."
     echo ""
     echo "Parámetros:"
     echo "  <archivo_o_directorio> Ruta a un archivo o a una carpeta (use '.' para actual)."
@@ -42,6 +43,7 @@ mostrar_ayuda() {
     echo "  imgcompress.sh foto.jpg                         # Comprime un archivo"
     echo "  imgcompress.sh .                                # Comprime todo el directorio actual"
     echo "  imgcompress.sh --webp .                         # Convierte todo el directorio a .webp"
+    echo "  imgcompress.sh --png .                          # Convierte todas las imágenes JPG/WebP del directorio a .png"
     echo "  imgcompress.sh --compress /ruta/a/fotos         # Comprime una carpeta específica"
     echo "  sudo imgcompress.sh --install"
     echo ""
@@ -52,7 +54,7 @@ mostrar_about() {
     echo "    imgcompress.sh"
     echo "    **************"
     echo ""
-    echo "    Comprime imágenes y realiza conversiones optimizadas a WebP."
+    echo "    Comprime imágenes y realiza conversiones optimizadas a WebP o PNG."
     echo ""
     echo "    Autor:     Nelson Ochoa."
     echo "    Github:    https://github.com/lncproducciones"
@@ -123,11 +125,13 @@ procesar_archivo() {
 
     # Validar formato
     if [[ "$EXT_ORIGEN" != "jpg" && "$EXT_ORIGEN" != "jpeg" && "$EXT_ORIGEN" != "png" && "$EXT_ORIGEN" != "webp" ]]; then
-        return 0 # Ignorar silenciosamente archivos que no sean imágenes compatibles
+        return 0 # Ignorar silenciosamente archivos no compatibles
     fi
 
-    # Si es .webp, forzar solo compresión
-    if [ "$EXT_ORIGEN" = "webp" ]; then
+    # Si la extensión de origen coincide con la conversión deseada, solo se comprime
+    if [ "$EXT_ORIGEN" = "webp" ] && [ "$MODO_ACTUAL" = "--webp" ]; then
+        MODO_ACTUAL="--compress"
+    elif [ "$EXT_ORIGEN" = "png" ] && [ "$MODO_ACTUAL" = "--png" ]; then
         MODO_ACTUAL="--compress"
     fi
 
@@ -135,11 +139,13 @@ procesar_archivo() {
     if [ -z "$ARCH_DESTINO" ]; then
         local DIR_ORIGEN
         DIR_ORIGEN="$(dirname "$ARCH_ORIGEN")"
+        local NOMBRE_BASE
+        NOMBRE_BASE="$(basename "$ARCH_ORIGEN" ."$EXT_ORIGEN")"
         
         if [ "$MODO_ACTUAL" = "--webp" ]; then
-            local NOMBRE_BASE
-            NOMBRE_BASE="$(basename "$ARCH_ORIGEN" ."$EXT_ORIGEN")"
             ARCH_DESTINO="${DIR_ORIGEN}/${NOMBRE_BASE}.webp"
+        elif [ "$MODO_ACTUAL" = "--png" ]; then
+            ARCH_DESTINO="${DIR_ORIGEN}/${NOMBRE_BASE}.png"
         else
             ARCH_DESTINO="$(mktemp "${DIR_ORIGEN}/temp_img_XXXXXX.${EXT_ORIGEN}")"
             USANDO_TEMPORAL=1
@@ -156,6 +162,12 @@ procesar_archivo() {
 
     if [ "$MODO_ACTUAL" = "--webp" ]; then
         cwebp -q 80 "$ARCH_ORIGEN" -o "$ARCH_DESTINO" &> /dev/null
+    elif [ "$MODO_ACTUAL" = "--png" ]; then
+        # Conversión a PNG con ImageMagick + optimización pngquant si existe
+        $CMD_MAGICK "$ARCH_ORIGEN" -strip "$ARCH_DESTINO"
+        if command -v pngquant &> /dev/null; then
+            pngquant --quality=65-80 --force --ext .png "$ARCH_DESTINO" &> /dev/null
+        fi
     else
         case "$EXT_ORIGEN" in
             jpg|jpeg)
@@ -204,7 +216,7 @@ esac
 # ------------------------------------------------------------------------------
 # Lectura Inteligente de Parámetros
 # ------------------------------------------------------------------------------
-if [ "$1" = "--compress" ] || [ "$1" = "--webp" ]; then
+if [ "$1" = "--compress" ] || [ "$1" = "--webp" ] || [ "$1" = "--png" ]; then
     MODO="$1"
     ORIGEN="$2"
     DESTINO="$3"
@@ -234,18 +246,24 @@ if [ -d "$ORIGEN" ]; then
     echo "Procesando imágenes en el directorio: '$ORIGEN'..."
     echo ""
     
-    # Habilitar nullglob para evitar errores si no hay archivos con alguna extensión
     shopt -s nullglob
-    ARCHIVOS=("$ORIGEN"/*.jpg "$ORIGEN"/*.jpeg "$ORIGEN"/*.png "$ORIGEN"/*.webp "$ORIGEN"/*.JPG "$ORIGEN"/*.JPEG "$ORIGEN"/*.PNG "$ORIGEN"/*.WEBP)
+
+    # Si estamos pidiendo convertir a --png, se excluyen los PNGs de la lista inicial
+    # para evitar sobrescribir/reprocesar PNGs existentes o recién creados.
+    if [ "$MODO" = "--png" ]; then
+        ARCHIVOS=("$ORIGEN"/*.jpg "$ORIGEN"/*.jpeg "$ORIGEN"/*.webp "$ORIGEN"/*.JPG "$ORIGEN"/*.JPEG "$ORIGEN"/*.WEBP)
+    else
+        ARCHIVOS=("$ORIGEN"/*.jpg "$ORIGEN"/*.jpeg "$ORIGEN"/*.png "$ORIGEN"/*.webp "$ORIGEN"/*.JPG "$ORIGEN"/*.JPEG "$ORIGEN"/*.PNG "$ORIGEN"/*.WEBP)
+    fi
+
     shopt -u nullglob
 
     if [ ${#ARCHIVOS[@]} -eq 0 ]; then
-        echo "No se encontraron imágenes compatibles (.jpg, .png, .webp) en '$ORIGEN'."
+        echo "No se encontraron imágenes elegibles para procesar en '$ORIGEN'."
         exit 0
     fi
 
     for ARCHIVO in "${ARCHIVOS[@]}"; do
-        # Evitar procesar archivos si son subdirectorios
         if [ -f "$ARCHIVO" ]; then
             procesar_archivo "$ARCHIVO" "" "$MODO"
         fi
